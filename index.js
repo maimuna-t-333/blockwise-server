@@ -21,45 +21,53 @@ async function run() {
   try {
     await client.connect();
 
-    const apartmentCollection = client.db("Blockwise").collection("Apartment");
+    const apartmentCollection = client.db("Blockwise").collection("apartments");
     const agreementCollection = client.db("Blockwise").collection("agreements");
 
     // ✅ GET apartments with pagination and rent filter
-    app.get("/apartments", async (req, res) => {
-      const page = parseInt(req.query.page) || 1;
-      const limit = 6;
-      const skip = (page - 1) * limit;
+app.get("/apartments", async (req, res) => {
+  const page = parseInt(req.query.page) || 1;
+  const limit = 6;
+  const skip = (page - 1) * limit;
 
-      const min = parseInt(req.query.min) || 0;
-      const max = parseInt(req.query.max) || 100000;
+  try {
+    const apartments = await apartmentCollection.find().skip(skip).limit(limit).toArray();  // 👈 Removed filter
+    const total = await apartmentCollection.countDocuments();
+    res.send({ apartments, total });
+  } catch (error) {
+    res.status(500).send({ message: "Error fetching apartments", error });
+  }
+});
 
-      const query = { rent: { $gte: min, $lte: max } };
-
-      try {
-        const apartments = await apartmentCollection.find(query).skip(skip).limit(limit).toArray();
-        const total = await apartmentCollection.countDocuments(query);
-        res.send({ apartments, total });
-      } catch (error) {
-        res.status(500).send({ message: "Error fetching apartments", error });
-      }
-    });
 
     // ✅ POST agreement
     app.post("/agreements", async (req, res) => {
-      const { email } = req.body;
+      console.log("Agreement data received:", req.body);
+
+      const { email, apartmentNo } = req.body;
+
+      if (!email || !apartmentNo) {
+        return res.status(400).send({ message: "Email and apartmentNo are required." });
+      }
 
       try {
-        const existing = await agreementCollection.findOne({ email });
-        if (existing) {
-          return res.status(400).send({ message: "Already applied for an apartment!" });
-        }
-
-        const result = await agreementCollection.insertOne({
-          ...req.body,
-          status: "pending",
+        // Check if this user already applied for this apartment
+        const existing = await agreementCollection.findOne({
+          email,
+          apartmentNo
         });
 
-        res.send(result);
+        if (existing) {
+          return res.status(400).send({ message: "You have already applied for this apartment!" });
+        }
+
+        const newAgreement = {
+          ...req.body,
+          status: "pending", // default status
+        };
+
+        const result = await agreementCollection.insertOne(newAgreement);
+        res.send({ message: "Agreement application submitted successfully!", result });
       } catch (error) {
         res.status(500).send({ message: "Error submitting agreement", error });
       }
