@@ -27,12 +27,20 @@ async function run() {
     // ✅ GET apartments with pagination and rent filter
 app.get("/apartments", async (req, res) => {
   const page = parseInt(req.query.page) || 1;
-  const limit = 6;
+  const minRent = parseInt(req.query.minRent);
+  const maxRent = parseInt(req.query.maxRent);
+  const limit = parseInt(req.query.limit) || 6;
+
   const skip = (page - 1) * limit;
 
+    const filter = {};
+  if (!isNaN(minRent) && !isNaN(maxRent)) {
+    filter.rent = { $gte: minRent, $lte: maxRent };
+  }
+
   try {
-    const apartments = await apartmentCollection.find().skip(skip).limit(limit).toArray();  // 👈 Removed filter
-    const total = await apartmentCollection.countDocuments();
+    const apartments = await apartmentCollection.find(filter).skip(skip).limit(limit).toArray();  // 👈 Removed filter
+    const total = await apartmentCollection.countDocuments(filter);
     res.send({ apartments, total });
   } catch (error) {
     res.status(500).send({ message: "Error fetching apartments", error });
