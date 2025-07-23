@@ -12,46 +12,47 @@ app.use(express.json());
 
 // MongoDB URI
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@xenpi.9qo9gbb.mongodb.net/?retryWrites=true&w=majority&appName=XenPi`;
-
 const client = new MongoClient(uri, {
   serverApi: ServerApiVersion.v1,
 });
+
+// Collections will be assigned here after connecting
+let apartmentCollection, agreementCollection, announcementCollection, usersCollection;
 
 async function run() {
   try {
     await client.connect();
 
-    const apartmentCollection = client.db("Blockwise").collection("apartments");
-    const agreementCollection = client.db("Blockwise").collection("agreements");
+    const db = client.db("Blockwise");
+    apartmentCollection = db.collection("apartments");
+    agreementCollection = db.collection("agreements");
+    announcementCollection = db.collection("announcements");
+    usersCollection = db.collection("users");
 
-    // ✅ GET apartments with pagination and rent filter
-app.get("/apartments", async (req, res) => {
-  const page = parseInt(req.query.page) || 1;
-  const minRent = parseInt(req.query.minRent);
-  const maxRent = parseInt(req.query.maxRent);
-  const limit = parseInt(req.query.limit) || 6;
+    // Apartments route
+    app.get("/apartments", async (req, res) => {
+      const page = parseInt(req.query.page) || 1;
+      const minRent = parseInt(req.query.minRent);
+      const maxRent = parseInt(req.query.maxRent);
+      const limit = parseInt(req.query.limit) || 6;
+      const skip = (page - 1) * limit;
 
-  const skip = (page - 1) * limit;
+      const filter = {};
+      if (!isNaN(minRent) && !isNaN(maxRent)) {
+        filter.rent = { $gte: minRent, $lte: maxRent };
+      }
 
-    const filter = {};
-  if (!isNaN(minRent) && !isNaN(maxRent)) {
-    filter.rent = { $gte: minRent, $lte: maxRent };
-  }
+      try {
+        const apartments = await apartmentCollection.find(filter).skip(skip).limit(limit).toArray();
+        const total = await apartmentCollection.countDocuments(filter);
+        res.send({ apartments, total });
+      } catch (error) {
+        res.status(500).send({ message: "Error fetching apartments", error });
+      }
+    });
 
-  try {
-    const apartments = await apartmentCollection.find(filter).skip(skip).limit(limit).toArray();  // 👈 Removed filter
-    const total = await apartmentCollection.countDocuments(filter);
-    res.send({ apartments, total });
-  } catch (error) {
-    res.status(500).send({ message: "Error fetching apartments", error });
-  }
-});
-
-
-    // ✅ POST agreement
+    // Agreements routes
     app.post("/agreements", async (req, res) => {
-      console.log("Agreement data received:", req.body);
-
       const { email, apartmentNo } = req.body;
 
       if (!email || !apartmentNo) {
@@ -59,19 +60,14 @@ app.get("/apartments", async (req, res) => {
       }
 
       try {
-        // Check if this user already applied for this apartment
-        const existing = await agreementCollection.findOne({
-          email,
-          apartmentNo
-        });
-
+        const existing = await agreementCollection.findOne({ email, apartmentNo });
         if (existing) {
           return res.status(400).send({ message: "You have already applied for this apartment!" });
         }
 
         const newAgreement = {
           ...req.body,
-          status: "pending", // default status
+          status: "pending",
         };
 
         const result = await agreementCollection.insertOne(newAgreement);
@@ -81,7 +77,6 @@ app.get("/apartments", async (req, res) => {
       }
     });
 
-    // ✅ GET agreement by user (optional)
     app.get("/agreements/:email", async (req, res) => {
       const email = req.params.email;
       try {
@@ -92,6 +87,58 @@ app.get("/apartments", async (req, res) => {
       }
     });
 
+    // Users routes
+app.post("/users", async (req, res) => {
+  const user = req.body;
+
+  if (!user.email) {
+    return res.status(400).send({ message: "Email is required" });
+  }
+
+  try {
+    const existing = await usersCollection.findOne({ email: user.email });
+
+    if (existing) {
+      return res.send({ message: "User already exists" });
+    }
+
+    const cleanUser = {
+      name: user.name || "No Name",
+      email: user.email,
+      role: "user",
+    };
+
+    const result = await usersCollection.insertOne(cleanUser);
+    res.send({ message: "User added", result });
+  } catch (err) {
+    res.status(500).send({ message: "Error creating user", error: err });
+  }
+});
+
+
+    app.get("/users/:email", async (req, res) => {
+      const email = req.params.email;
+      try {
+        const user = await usersCollection.findOne({ email });
+        if (!user) {
+          return res.status(404).send({ message: "User not found" });
+        }
+        res.send(user);
+      } catch (err) {
+        res.status(500).send({ message: "Error getting user", error: err });
+      }
+    });
+
+    // Announcements route
+    app.get("/announcements", async (req, res) => {
+      try {
+        const announcements = await announcementCollection.find().sort({ createdAt: -1 }).toArray();
+        res.send(announcements);
+      } catch (error) {
+        res.status(500).send({ message: "Error fetching announcements", error });
+      }
+    });
+
   } catch (error) {
     console.error("MongoDB connection error:", error);
   }
@@ -99,14 +146,12 @@ app.get("/apartments", async (req, res) => {
 
 run().catch(console.dir);
 
-// Base Route
+// Base route
 app.get("/", (req, res) => {
   res.send("BlockWise Server is Running");
 });
 
-// Start Server
+// Start server
 app.listen(port, () => {
   console.log(`Server is listening on port ${port}`);
 });
-
-  
