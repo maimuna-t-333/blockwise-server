@@ -52,30 +52,40 @@ async function run() {
     });
 
     // Agreements routes
-    app.post("/agreements", async (req, res) => {
-      const { email, apartmentNo } = req.body;
+app.post("/agreements", async (req, res) => {
+  const { email, apartmentNo } = req.body;
 
-      if (!email || !apartmentNo) {
-        return res.status(400).send({ message: "Email and apartmentNo are required." });
-      }
+  if (!email || !apartmentNo) {
+    return res.status(400).send({ message: "Email and apartmentNo are required." });
+  }
 
-      try {
-        const existing = await agreementCollection.findOne({ email, apartmentNo });
-        if (existing) {
-          return res.status(400).send({ message: "You have already applied for this apartment!" });
-        }
+  try {
+    // Check if agreement already exists
+    const existing = await agreementCollection.findOne({ email, apartmentNo });
+    if (existing) {
+      return res.status(400).send({ message: "You have already applied for this apartment!" });
+    }
 
-        const newAgreement = {
-          ...req.body,
-          status: "pending",
-        };
+    // Insert new agreement
+    const newAgreement = {
+      ...req.body,
+      status: "pending",
+    };
+    const result = await agreementCollection.insertOne(newAgreement);
 
-        const result = await agreementCollection.insertOne(newAgreement);
-        res.send({ message: "Agreement application submitted successfully!", result });
-      } catch (error) {
-        res.status(500).send({ message: "Error submitting agreement", error });
-      }
-    });
+    // ✅ Update the user's role to "member"
+    await usersCollection.updateOne(
+      { email },
+      { $set: { role: "member" } }
+    );
+
+    res.send({ message: "Agreement submitted and user role updated to member!", insertedId: result.insertedId });
+  } catch (error) {
+    console.error("Agreement error:", error);
+    res.status(500).send({ message: "Error submitting agreement", error });
+  }
+});
+
 
     app.get("/agreements/:email", async (req, res) => {
       const email = req.params.email;
