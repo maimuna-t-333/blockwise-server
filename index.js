@@ -19,6 +19,8 @@ const client = new MongoClient(uri, {
 // Collections will be assigned here after connecting
 let apartmentCollection, agreementCollection, announcementCollection, usersCollection;
 
+const ADMIN_EMAIL = "admin@gmail.com";
+
 async function run() {
   try {
     await client.connect();
@@ -28,7 +30,7 @@ async function run() {
     agreementCollection = db.collection("agreements");
     announcementCollection = db.collection("announcements");
     usersCollection = db.collection("users");
-
+couponsCollection = db("yourDB").collection("coupons");
     // Apartments route
     app.get("/apartments", async (req, res) => {
       const page = parseInt(req.query.page) || 1;
@@ -112,10 +114,16 @@ app.post("/users", async (req, res) => {
       return res.send({ message: "User already exists" });
     }
 
+    // 👇 Role based on email
+    let role = "user";
+    if (user.email === ADMIN_EMAIL) {
+      role = "admin";
+    }
+
     const cleanUser = {
       name: user.name || "No Name",
       email: user.email,
-      role: "user",
+      role: role,
     };
 
     const result = await usersCollection.insertOne(cleanUser);
@@ -153,6 +161,139 @@ app.post("/users", async (req, res) => {
     console.error("MongoDB connection error:", error);
   }
 }
+
+// POST: Create Announcement
+app.post("/announcements", async (req, res) => {
+  const { title, description } = req.body;
+
+  if (!title || !description) {
+    return res.status(400).send({ message: "Title and description are required" });
+  }
+
+  try {
+    const result = await announcementCollection.insertOne({
+      title,
+      description,
+      date: new Date(),
+    });
+
+    res.send({ message: "Announcement created", result });
+  } catch (err) {
+    res.status(500).send({ message: "Error saving announcement", error: err });
+  }
+});
+
+// PATCH: Update agreement and user role
+app.patch("/agreements/respond/:id", async (req, res) => {
+  const { id } = req.params;
+  const { accepted, email } = req.body;
+
+  try {
+    // 1. Update agreement status
+    const updateAgreement = await agreementCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { status: "checked" } }
+    );
+
+    // 2. If accepted, update role to member
+    let updateUser = null;
+    if (accepted) {
+      updateUser = await usersCollection.updateOne(
+        { email },
+        { $set: { role: "member" } }
+      );
+    }
+
+    res.send({ message: "Agreement processed", updateAgreement, updateUser });
+  } catch (err) {
+    res.status(500).send({ message: "Error processing agreement", error: err });
+  }
+});
+
+
+
+app.put("/users/remove-member/:email", async (req, res) => {
+  const email = req.params.email;
+  const result = await usersCollection.updateOne(
+    { email },
+    { $set: { role: "user" } }
+  );
+  res.send(result);
+});
+
+app.get("/users", async (req, res) => {
+  const roleFilter = req.query.role;
+  const query = roleFilter ? { role: roleFilter } : {};
+  try {
+    const users = await usersCollection.find(query).toArray();
+    res.send(users);
+  } catch (err) {
+    res.status(500).send({ message: "Failed to fetch users", error: err });
+  }
+});
+
+app.patch("/users/downgrade/:email", async (req, res) => {
+  const email = req.params.email;
+  try {
+    const result = await usersCollection.updateOne(
+      { email },
+      { $set: { role: "user" } }
+    );
+    res.send(result);
+  } catch (err) {
+    res.status(500).send({ message: "Error downgrading user", error: err });
+  }
+});
+
+app.post("/announcements", async (req, res) => {
+  const announcement = req.body;
+  const result = await announcementsCollection.insertOne(announcement);
+  res.send(result);
+});
+
+app.put("/agreements/accept/:id", async (req, res) => {
+  const id = new ObjectId(req.params.id);
+  const { email } = req.body;
+
+  await agreementCollection.updateOne({ _id: id }, { $set: { status: "checked" } });
+  await usersCollection.updateOne({ email }, { $set: { role: "member" } });
+
+  res.send({ message: "Accepted" });
+});
+
+app.put("/agreements/reject/:id", async (req, res) => {
+  const id = new ObjectId(req.params.id);
+  await agreementCollection.updateOne({ _id: id }, { $set: { status: "checked" } });
+  res.send({ message: "Rejected" });
+});
+
+app.post("/coupons", async (req, res) => {
+  const coupon = req.body;
+  const result = await couponCollection.insertOne(coupon);
+  res.send(result);
+});
+
+// Create coupon
+app.post("/coupons", async (req, res) => {
+  const coupon = req.body;
+  try {
+    const result = await couponsCollection.insertOne(coupon);
+    res.send({ message: "Coupon added", result });
+  } catch (err) {
+    res.status(500).send({ message: "Error adding coupon", error: err });
+  }
+});
+
+// Get all coupons
+app.get("/coupons", async (req, res) => {
+  try {
+    const result = await couponsCollection.find().toArray();
+    res.send(result);
+  } catch (err) {
+    res.status(500).send({ message: "Error fetching coupons", error: err });
+  }
+});
+
 
 run().catch(console.dir);
 
