@@ -1,10 +1,17 @@
+require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
-require("dotenv").config();
+
 
 const app = express();
 const port = process.env.PORT || 5000;
+
+const adminEmail = process.env.ADMIN_EMAIL;
+const adminPassword = process.env.ADMIN_PASSWORD;
+
+console.log("Admin email from env:", process.env.ADMIN_EMAIL);
+console.log("Admin password from env:", process.env.ADMIN_PASSWORD);
 
 // Middleware
 app.use(cors({
@@ -13,6 +20,18 @@ app.use(cors({
 }));
 app.use(express.json());
 
+app.post("/admin-login", (req, res) => {
+  const { email, password } = req.body;
+
+  if (email === adminEmail && password === adminPassword) {
+    return res.status(200).json({ success: true, message: "Admin logged in" });
+  } else {
+    return res.status(401).json({ success: false, message: "Invalid credentials" });
+  }
+});
+
+
+
 // MongoDB URI
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@xenpi.9qo9gbb.mongodb.net/?retryWrites=true&w=majority&appName=XenPi`;
 const client = new MongoClient(uri, {
@@ -20,6 +39,8 @@ const client = new MongoClient(uri, {
 });
 
 let apartmentCollection, agreementCollection, announcementCollection, usersCollection, couponsCollection;
+
+
 
 async function run() {
   try {
@@ -31,7 +52,11 @@ async function run() {
     announcementCollection = db.collection("announcements");
     usersCollection = db.collection("users");
     couponsCollection = db.collection("coupons");
-    paymentsCollection=db.collection("payments")
+    paymentsCollection = db.collection("payments")
+
+
+
+
 
     // Apartments
     app.get("/apartments", async (req, res) => {
@@ -70,7 +95,7 @@ async function run() {
       const email = req.query.email;
       if (!email) return res.status(400).send({ message: "Email required" });
       const agreement = await agreementCollection.findOne({ email });
-      if (!agreement) return res.status(404).send({ message: "Not found" });
+      if (!agreement) return res.send({});
       res.send(agreement);
     });
 
@@ -101,6 +126,16 @@ async function run() {
       const user = req.body;
       const result = await usersCollection.insertOne(user);
       res.send(result);
+    });
+
+    app.get("/users/role", async (req, res) => {
+      const email = req.query.email;
+      if (!email) return res.status(400).send({ message: "Email is required" });
+
+      const user = await usersCollection.findOne({ email });
+      if (!user) return res.send({ role: "user" }); // default fallback
+
+      res.send({ role: user.role || "user" });
     });
 
     app.get("/users/:email", async (req, res) => {
@@ -151,17 +186,21 @@ async function run() {
   } catch (err) {
     console.error("Error starting server:", err);
   }
+
+  // payment
+  app.get('/api/payments', async (req, res) => {
+    const email = req.query.email;
+    if (!email) return res.status(400).send({ message: "Email required" });
+
+    const payments = await paymentsCollection.find({ email }).toArray();
+    res.send(payments);
+  });
+
 }
 
-// payment
 
-app.get('/api/payments', async (req, res) => {
-  const email = req.query.email;
-  if (!email) return res.status(400).send({ message: "Email required" });
 
-  const payments = await paymentsCollection.find({ email }).toArray();
-  res.send(payments);
-});
+
 
 run().catch(console.dir);
 
