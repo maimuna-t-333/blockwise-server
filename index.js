@@ -13,6 +13,8 @@ const adminPassword = process.env.ADMIN_PASSWORD;
 console.log("Admin email from env:", process.env.ADMIN_EMAIL);
 console.log("Admin password from env:", process.env.ADMIN_PASSWORD);
 
+const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
+
 // Middleware
 app.use(cors({
   origin: "http://localhost:5173",
@@ -195,6 +197,22 @@ async function run() {
     const payments = await paymentsCollection.find({ email }).toArray();
     res.send(payments);
   });
+
+  app.post("/create-payment-intent", async (req, res) => {
+  const { amount } = req.body;
+
+  try {
+    const paymentIntent = await stripe.paymentIntents.create({
+      amount: amount * 100, // Stripe takes amount in cents
+      currency: "usd",
+      payment_method_types: ["card"],
+    });
+
+    res.send({ clientSecret: paymentIntent.client_secret });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 
 }
 
