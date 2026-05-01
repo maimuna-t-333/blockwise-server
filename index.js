@@ -1,4 +1,10 @@
 require("dotenv").config();
+const admin=require("firebase-admin");
+const serviceAccount=require("./serviceAccountKey.json");
+
+admin.initializeApp({
+  credential:admin.credential.cert(serviceAccount)
+})
 const express = require("express");
 const cors = require("cors");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
@@ -21,6 +27,35 @@ app.use(cors({
   credentials: true,
 }));
 app.use(express.json());
+
+const verifyToken=async(req,res,next)=>{
+  const authHeader=req.headers.authorization;
+
+  if(!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).send({message:"Unauthorized - no token"});
+  }
+
+  const token=authHeader.split("")[1];
+  try{
+const decoded=await admin.auth().verifyIdToken(token);
+    req.user=decoded;
+    next();
+  }
+  catch(error){
+    return res.status(401).send({message:"Unauthorized -invalid token"});
+  }
+}
+
+const verifyAdmin=async(req,res,next)=>{
+  const email=req.user.email;
+  const user=await usersCollection.findOne({email});
+
+  if(!user && user.role !== "admin"){
+    return res.status(403).send({message:"Forbidden -admin only"});
+  }
+
+  next();
+}
 
 app.post("/admin-login", (req, res) => {
   const { email, password } = req.body;
@@ -79,7 +114,7 @@ app.get("/apartments", async (req, res) => {
 });
 
 // Agreements
-app.post("/agreements", async (req, res) => {
+app.post("/agreements", verifyToken, async (req, res) => {
   const { email, apartmentNo } = req.body;
   if (!email || !apartmentNo) return res.status(400).send({ message: "Email and apartmentNo are required." });
 
@@ -93,7 +128,7 @@ app.post("/agreements", async (req, res) => {
   res.send({ message: "Agreement submitted", insertedId: result.insertedId });
 });
 
-app.get("/api/agreements", async (req, res) => {
+app.get("/api/agreements", verifyToken, async (req, res) => {
   const email = req.query.email;
   if (!email) return res.status(400).send({ message: "Email required" });
   const agreement = await agreementCollection.findOne({ email });
@@ -101,16 +136,16 @@ app.get("/api/agreements", async (req, res) => {
   res.send(agreement);
 });
 
-// app.patch("/agreements/respond/:id", async (req, res) => {
-//   const { id } = req.params;
-//   const { accepted, email } = req.body;
-//   await agreementCollection.updateOne({ _id: new ObjectId(id) }, { $set: { status: "checked" } });
-//   if (accepted) await usersCollection.updateOne({ email }, { $set: { role: "member" } });
-//   res.send({ message: "Agreement processed" });
-// });
+app.patch("/agreements/respond/:id", verifyToken, verifyAdmin, async (req, res) => {
+  const { id } = req.params;
+  const { accepted, email } = req.body;
+  await agreementCollection.updateOne({ _id: new ObjectId(id) }, { $set: { status: "checked" } });
+  if (accepted) await usersCollection.updateOne({ email }, { $set: { role: "member" } });
+  res.send({ message: "Agreement processed" });
+});
 
 
-app.patch("/agreements/respond/:id", async (req, res) => {
+app.patch("/agreements/respond/:id", verifyToken,verifyAdmin, async (req, res) => {
   const agreementId = req.params.id;
   const { accepted, email } = req.body;
 
@@ -137,7 +172,7 @@ app.patch("/agreements/respond/:id", async (req, res) => {
 });
 
 
-app.put("/agreements/accept/:id", async (req, res) => {
+app.put("/agreements/accept/:id", verifyToken, verifyAdmin, async (req, res) => {
   const id = new ObjectId(req.params.id);
   const { email } = req.body;
   await agreementCollection.updateOne({ _id: id }, { $set: { status: "checked" } });
@@ -145,14 +180,14 @@ app.put("/agreements/accept/:id", async (req, res) => {
   res.send({ message: "Accepted" });
 });
 
-app.put("/agreements/reject/:id", async (req, res) => {
+app.put("/agreements/reject/:id", verifyToken, verifyAdmin, async (req, res) => {
   const id = new ObjectId(req.params.id);
   await agreementCollection.updateOne({ _id: id }, { $set: { status: "checked" } });
   res.send({ message: "Rejected" });
 });
 
 // Backend: get all pending agreements
-app.get("/api/agreements/pending", async (req, res) => {
+app.get("/api/agreements/pending", verifyToken, verifyAdmin, async (req, res) => {
   const pendingAgreements = await agreementCollection.find({ status: "pending" }).toArray();
   res.send(pendingAgreements);
 });
@@ -165,8 +200,13 @@ app.post("/users", async (req, res) => {
   res.send(result);
 });
 
-app.get("/users/role", async (req, res) => {
+app.get("/users/role", verifyToken, async (req, res) => {
   const email = req.query.email;
+
+  if(req.user.email !== email){
+    return res.status(403).send({message:"Forbidden"});
+  }
+
   if (!email) return res.status(400).send({ message: "Email is required" });
 
   const user = await usersCollection.findOne({ email });
@@ -175,28 +215,34 @@ app.get("/users/role", async (req, res) => {
   res.send({ role: user.role || "user" });
 });
 
-app.get("/users/:email", async (req, res) => {
+app.get("/users/:email", verifyToken, async (req, res) => {
+
   const email = req.params.email;
+
+    if(req.user.email !== email){
+    return res.status(403).send({message:"Forbidden"});
+  }
+
   const user = await usersCollection.findOne({ email });
   if (!user) return res.status(404).send({ message: "User not found" });
   res.send(user);
 });
 
-app.get("/users", async (req, res) => {
+app.get("/users", verifyToken, verifyAdmin, async (req, res) => {
   const roleFilter = req.query.role;
   const query = roleFilter ? { role: roleFilter } : {};
   const users = await usersCollection.find(query).toArray();
   res.send(users);
 });
 
-app.patch("/users/downgrade/:email", async (req, res) => {
+app.patch("/users/downgrade/:email", verifyToken, verifyAdmin, async (req, res) => {
   const email = req.params.email;
   const result = await usersCollection.updateOne({ email }, { $set: { role: "user" } });
   res.send(result);
 });
 
 // Announcements
-app.post("/announcements", async (req, res) => {
+app.post("/announcements", verifyToken, verifyAdmin, async (req, res) => {
   const { title, description } = req.body;
   if (!title || !description) return res.status(400).send({ message: "Missing title or description" });
   const result = await announcementCollection.insertOne({ title, description, date: new Date() });
@@ -209,7 +255,7 @@ app.get("/announcements", async (req, res) => {
 });
 
 // Coupons
-app.post("/coupons", async (req, res) => {
+app.post("/coupons", verifyToken, verifyAdmin, async (req, res) => {
   const coupon = req.body;
   const result = await couponsCollection.insertOne(coupon);
   res.send({ message: "Coupon added", result });
@@ -225,7 +271,7 @@ app.get("/coupons", async (req, res) => {
 // }
 
 // payment
-app.get('/api/payments', async (req, res) => {
+app.get('/api/payments', verifyToken, async (req, res) => {
   const email = req.query.email;
   if (!email) return res.status(400).send({ message: "Email required" });
 
@@ -233,7 +279,7 @@ app.get('/api/payments', async (req, res) => {
   res.send(payments);
 });
 
-app.post("/create-payment-intent", async (req, res) => {
+app.post("/create-payment-intent", verifyToken, async (req, res) => {
   const { amount } = req.body;
 
   try {
